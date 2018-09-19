@@ -54,7 +54,7 @@ type CustomState struct{}
 func (API) QueryFramebufferAttachment(
 	ctx context.Context,
 	intent replay.Intent,
-	mgr *replay.Manager,
+	mgr replay.Manager,
 	after []uint64,
 	width, height uint32,
 	attachment api.FramebufferAttachment,
