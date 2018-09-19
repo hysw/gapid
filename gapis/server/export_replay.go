@@ -1,0 +1,136 @@
+// Copyright (C) 2018 Google Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package server implements the rpc gpu debugger service, queriable by the
+// clients, along with some helpers exposed via an http listener.
+package server
+
+import (
+	"context"
+	"io/ioutil"
+	"os"
+	gopath "path"
+
+	"github.com/golang/protobuf/proto"
+	"github.com/google/gapid/core/archive"
+	"github.com/google/gapid/core/data/id"
+	"github.com/google/gapid/core/log"
+	"github.com/google/gapid/gapis/capture"
+	"github.com/google/gapid/gapis/database"
+	"github.com/google/gapid/gapis/replay"
+	"github.com/google/gapid/gapis/resolve"
+	"github.com/google/gapid/gapis/service"
+	"github.com/google/gapid/gapis/service/path"
+)
+
+func exportReplay(ctx context.Context, c *path.Capture, d *path.Device, out string, opts *service.ExportReplayOptions) error {
+	if d == nil {
+		return log.Errf(ctx, nil, "Unable to produce replay on unknown device.")
+	}
+
+	cap, err := capture.ResolveFromPath(ctx, c)
+
+	exporter := replay.NewExporter()
+	intent := replay.Intent{d, c}
+
+	switch {
+	case opts.Report != nil && len(opts.GetFramebufferAttachmentRequests) > 0:
+		return log.Errf(ctx, nil, "Report and Framebuffer requests are not compatible.")
+	case opts.GetFramebufferAttachmentRequests != nil:
+		r := &path.ResolveConfig{ReplayDevice: d}
+		changes, err := resolve.FramebufferChanges(ctx, c, r)
+		if err != nil {
+			return err
+		}
+
+		for _, req := range opts.GetFramebufferAttachmentRequests {
+			fbInfo, err := changes.Get(ctx, req.After, req.Attachment)
+			if err != nil {
+				return err
+			}
+
+			for _, a := range cap.APIs {
+				a, ok := a.(replay.QueryFramebufferAttachment)
+				if !ok {
+					continue
+				}
+				if _, err := a.QueryFramebufferAttachment(
+					ctx,                   // context.Context
+					intent,                // Intent
+					exporter,              // Manager
+					req.After.Indices,     // after []uint64
+					fbInfo.Width,          // width uint32
+					fbInfo.Height,         // height uint32
+					req.Attachment,        // api.FramebufferAttachment
+					fbInfo.Index,          // uint32
+					req.Settings.DrawMode, // service.DrawMode
+					true,  // disableReplayOptimization bool
+					false, // displayToSurface bool
+					nil,   // hints *service.UsageHints
+				); err != nil {
+					return err
+				}
+			}
+		}
+	case opts.Report != nil:
+		// TODO(hysw): Add a simple replay request that output commands as
+		// captured. For now, if there are no frame query, force an issue query.
+		// Since otherwise the trace will not be generated.
+		fallthrough
+	default:
+		for _, a := range cap.APIs {
+			a, ok := a.(replay.QueryIssues)
+			if !ok {
+				continue
+			}
+			if _, err := a.QueryIssues(ctx, intent, exporter, false, nil); err != nil {
+				return err
+			}
+		}
+	}
+
+	payload, err := exporter.Export(ctx)
+	if err != nil {
+		return err
+	}
+
+	err = os.MkdirAll(out, os.ModePerm)
+	if err != nil {
+		return log.Errf(ctx, err, "Failed to create output directory: %v", out)
+	}
+
+	payloadBytes, err := proto.Marshal(payload)
+	if err != nil {
+		return log.Errf(ctx, err, "Failed to serialize replay payload.")
+	}
+	err = ioutil.WriteFile(gopath.Join(out, "payload.bin"), payloadBytes, 0644)
+
+	ar := archive.New(gopath.Join(out, "resources"))
+	defer ar.Dispose()
+
+	db := database.Get(ctx)
+	for _, ri := range payload.Resources {
+		rID, err := id.Parse(ri.Id)
+		if err != nil {
+			return log.Errf(ctx, err, "Failed to parse resource id: %v", ri.Id)
+		}
+		obj, err := db.Resolve(ctx, rID)
+		if err != nil {
+			return log.Errf(ctx, err, "Failed to parse resource id: %v", ri.Id)
+		}
+		ar.Write(ri.Id, obj.([]byte))
+	}
+
+	return nil
+}
