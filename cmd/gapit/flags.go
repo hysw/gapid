@@ -70,6 +70,16 @@ type (
 	CommandFilterFlags struct {
 		Context int `help:"Filter to the i'th context."`
 	}
+	ConvertFlags struct {
+		Format string `help:"format name"`
+		List   bool   `help:"list available formats"`
+		Size   struct {
+			Width  int `help:"width of image"`
+			Height int `help:"height of image"`
+			Depth  int `help:"depth of image"`
+		}
+		Out string `help:"output image"`
+	}
 	ObservationFlags struct {
 		Ranges bool `help:"if true then display the read and write ranges made by each command."`
 		Data   bool `help:"if true then display the bytes read and written by each command. Implies Ranges."`

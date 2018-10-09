@@ -1,0 +1,592 @@
+// Copyright (C) 2017 Google Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io/ioutil"
+	"os"
+
+	"github.com/google/gapid/core/app"
+	"github.com/google/gapid/core/image"
+	"github.com/google/gapid/core/image/astc"
+	"github.com/google/gapid/core/stream"
+	"github.com/google/gapid/core/stream/fmts"
+)
+
+type convertVerb struct{ ConvertFlags }
+
+func init() {
+	verb := &convertVerb{}
+	app.AddVerb(&app.Verb{
+		Name:      "convert",
+		ShortHelp: "Convert image from vulkan/gles format to ppm/png.",
+		Action:    verb,
+	})
+}
+
+func (verb *convertVerb) list(ctx context.Context, flags flag.FlagSet) error {
+	for key := range verb.formats() {
+		fmt.Println(key)
+	}
+	return nil
+}
+
+func (verb *convertVerb) Run(ctx context.Context, flags flag.FlagSet) error {
+	if verb.List {
+		return verb.list(ctx, flags)
+	}
+	if flags.NArg() != 1 || len(verb.Out) == 0 || len(verb.Format) == 0 {
+		app.Usage(ctx, "-format <format> -out <output> <input>")
+		return nil
+	}
+	f, ok := verb.formats()[verb.Format]
+	if !ok {
+		return fmt.Errorf("format not found, use -list to find the available formats")
+	}
+	data, err := ioutil.ReadFile(flags.Arg(0))
+	if err != nil {
+		return fmt.Errorf("can't read input file, %v", err)
+	}
+	w, h, d := verb.Size.Width, verb.Size.Height, verb.Size.Depth
+	data, err = image.Convert(data, w, h, d, f, image.RGBA_U8_NORM)
+	if err != nil {
+		return err
+	}
+	data, err = image.Convert(data, w, h, d, image.RGBA_U8_NORM, image.PNG)
+	if err != nil {
+		return err
+	}
+	if err := ioutil.WriteFile(verb.Out, data, os.ModePerm); err != nil {
+		return fmt.Errorf("can't write output file, %v", err)
+	}
+	return nil
+}
+
+func (verb *convertVerb) formats() map[string]*image.Format {
+	imageFormats := map[string]*image.Format{}
+
+	for _, f := range []*image.Format{
+		// ASTC
+		astc.RGBA_4x4,
+		astc.RGBA_5x4,
+		astc.RGBA_5x5,
+		astc.RGBA_6x5,
+		astc.RGBA_6x6,
+		astc.RGBA_8x5,
+		astc.RGBA_8x6,
+		astc.RGBA_8x8,
+		astc.RGBA_10x5,
+		astc.RGBA_10x6,
+		astc.RGBA_10x8,
+		astc.RGBA_10x10,
+		astc.RGBA_12x10,
+		astc.RGBA_12x12,
+		astc.SRGB8_ALPHA8_4x4,
+		astc.SRGB8_ALPHA8_5x4,
+		astc.SRGB8_ALPHA8_5x5,
+		astc.SRGB8_ALPHA8_6x5,
+		astc.SRGB8_ALPHA8_6x6,
+		astc.SRGB8_ALPHA8_8x5,
+		astc.SRGB8_ALPHA8_8x6,
+		astc.SRGB8_ALPHA8_8x8,
+		astc.SRGB8_ALPHA8_10x5,
+		astc.SRGB8_ALPHA8_10x6,
+		astc.SRGB8_ALPHA8_10x8,
+		astc.SRGB8_ALPHA8_10x10,
+		astc.SRGB8_ALPHA8_12x10,
+		astc.SRGB8_ALPHA8_12x12,
+		// ATC
+		image.ATC_RGB_AMD,
+		image.ATC_RGBA_EXPLICIT_ALPHA_AMD,
+		image.ATC_RGBA_INTERPOLATED_ALPHA_AMD,
+		// ETC
+		image.ETC1_RGB_U8_NORM,
+		image.ETC2_RGB_U8_NORM,
+		image.ETC2_RGBA_U8_NORM,
+		image.ETC2_RGBA_U8U8U8U1_NORM,
+		image.ETC2_SRGB_U8_NORM,
+		image.ETC2_SRGBA_U8_NORM,
+		image.ETC2_SRGBA_U8U8U8U1_NORM,
+		image.ETC2_R_U11_NORM,
+		image.ETC2_RG_U11_NORM,
+		image.ETC2_R_S11_NORM,
+		image.ETC2_RG_S11_NORM,
+		// PNG
+		image.PNG,
+		// RGTC
+		image.RGTC1_BC4_R_U8_NORM,
+		image.RGTC1_BC4_R_S8_NORM,
+		image.RGTC2_BC5_RG_U8_NORM,
+		image.RGTC2_BC5_RG_S8_NORM,
+		// S3
+		image.S3_DXT1_RGB,
+		image.S3_DXT1_RGBA,
+		image.S3_DXT3_RGBA,
+		image.S3_DXT5_RGBA,
+	} {
+		imageFormats[f.Name] = f
+	}
+
+	// Stream formats.
+	for _, f := range []*stream.Format{
+		fmts.ABGR_U8,
+		fmts.ABGR_S8,
+		fmts.ABGR_U8_NORM,
+		fmts.ABGR_S8_NORM,
+		fmts.ABGR_NU8N_sRGBU8N_sRGBU8N_sRGBU8,
+		fmts.ABGR_U2U10U10U10,
+		fmts.ABGR_S2S10S10S10,
+		fmts.ABGR_U2U10U10U10_NORM,
+		fmts.ABGR_S2S10S10S10_NORM,
+		fmts.ARGB_U1U5U5U5_NORM,
+		fmts.ARGB_U2U10U10U10,
+		fmts.ARGB_S2S10S10S10,
+		fmts.ARGB_U2U10U10U10_NORM,
+		fmts.ARGB_S2S10S10S10_NORM,
+		fmts.A_U16_NORM,
+		fmts.A_U8_NORM,
+		fmts.BGR_U5U6U5_NORM,
+		fmts.BGR_F10F11F11,
+		fmts.BGR_U8,
+		fmts.BGR_S8,
+		fmts.BGR_U8_NORM,
+		fmts.BGR_S8_NORM,
+		fmts.BGR_U8_NORM_sRGB,
+		fmts.BGRA_U4_NORM,
+		fmts.BGRA_U5U5U5U1_NORM,
+		fmts.BGRA_U8,
+		fmts.BGRA_S8,
+		fmts.BGRA_U8_NORM,
+		fmts.BGRA_S8_NORM,
+		fmts.BGRA_N_sRGBU8N_sRGBU8N_sRGBU8NU8,
+		fmts.BGRA_U10U10U10U2_NORM,
+		fmts.BGRA_S10S10S10S2_NORM,
+		fmts.BGRA_U10U10U10U2,
+		fmts.BGRA_S10S10S10S2,
+		fmts.RGB_F11F11F10,
+		fmts.RGBA_U10U10U10U2,
+		fmts.RGBA_U10U10U10U2_NORM,
+		fmts.RGBA_S10S10S10S2,
+		fmts.RGBA_S10S10S10S2_NORM,
+		fmts.D_F32,
+		fmts.D_U16_NORM,
+		fmts.ЖD_U8U24_NORM,
+		fmts.DS_F32U8,
+		fmts.DS_NU16U8,
+		fmts.DS_NU16S8,
+		fmts.DS_NU24U8,
+		fmts.DS_NU24S8,
+		fmts.Gray_U16_NORM,
+		fmts.Gray_U8_NORM,
+		fmts.L_F32,
+		fmts.L_U8_NORM,
+		fmts.LA_U8_NORM,
+		fmts.R_U16_NORM,
+		fmts.R_U8,
+		fmts.R_S8,
+		fmts.R_U8_NORM,
+		fmts.R_S8_NORM,
+		fmts.R_U8_NORM_sRGB,
+		fmts.R_U16,
+		fmts.R_S16,
+		fmts.R_S16_NORM,
+		fmts.R_F16,
+		fmts.R_U32,
+		fmts.R_S32,
+		fmts.R_F32,
+		fmts.R_U64,
+		fmts.R_S64,
+		fmts.R_F64,
+		fmts.RG_U4_NORM,
+		fmts.RG_S8,
+		fmts.RG_F16,
+		fmts.RG_F32,
+		fmts.RG_U8_NORM,
+		fmts.RG_S8_NORM,
+		fmts.RG_U8,
+		fmts.RG_U8_NORM_sRGB,
+		fmts.RG_U16,
+		fmts.RG_S16,
+		fmts.RG_U16_NORM,
+		fmts.RG_S16_NORM,
+		fmts.RG_U32,
+		fmts.RG_S32,
+		fmts.RG_U64,
+		fmts.RG_S64,
+		fmts.RG_F64,
+		fmts.RGB_U1_NORM,
+		fmts.RGB_U1,
+		fmts.RGB_U4_NORM,
+		fmts.RGB_U4,
+		fmts.RGB_U5_NORM,
+		fmts.RGB_U5U6U5_NORM,
+		fmts.RGB_U8,
+		fmts.RGB_S8,
+		fmts.RGB_U8_NORM,
+		fmts.RGB_S8_NORM,
+		fmts.RGB_S16,
+		fmts.RGB_U16,
+		fmts.RGB_U16_NORM,
+		fmts.RGB_S16_NORM,
+		fmts.RGB_F16,
+		fmts.RGB_S32,
+		fmts.RGB_U32,
+		fmts.RGB_F32,
+		fmts.RGB_S64,
+		fmts.RGB_U64,
+		fmts.RGB_F64,
+		fmts.RGBA_U4_NORM,
+		fmts.RGBA_U5U5U5U1_NORM,
+		fmts.RGBA_U8,
+		fmts.RGBA_S8,
+		fmts.RGBA_U8_NORM,
+		fmts.RGBA_S8_NORM,
+		fmts.RGBA_U16,
+		fmts.RGBA_S16,
+		fmts.RGBA_U16_NORM,
+		fmts.RGBA_S16_NORM,
+		fmts.RGBA_F16,
+		fmts.RGBA_U32,
+		fmts.RGBA_S32,
+		fmts.RGBA_F32,
+		fmts.RGBA_U64,
+		fmts.RGBA_S64,
+		fmts.RGBA_F64,
+		fmts.RGBE_U9U9U9U5,
+		fmts.SD_U8F32,
+		fmts.SD_U8NU16,
+		fmts.SD_U8NU24,
+		fmts.SRGB_U8_NORM,
+		fmts.SRGBA_U8_NORM,
+		fmts.X_U8,
+		fmts.X_S8,
+		fmts.X_U8_NORM,
+		fmts.X_S8_NORM,
+		fmts.X_U16,
+		fmts.X_S16,
+		fmts.X_U16_NORM,
+		fmts.X_S16_NORM,
+		fmts.X_F16,
+		fmts.X_U32,
+		fmts.X_S32,
+		fmts.X_F32,
+		fmts.XY_U8,
+		fmts.XY_S8,
+		fmts.XY_U8_NORM,
+		fmts.XY_S8_NORM,
+		fmts.XY_U16,
+		fmts.XY_S16,
+		fmts.XY_U16_NORM,
+		fmts.XY_S16_NORM,
+		fmts.XY_F16,
+		fmts.XY_U32,
+		fmts.XY_S32,
+		fmts.XY_F32,
+		fmts.XYZ_F32,
+		fmts.XYZ_F64,
+		fmts.XYZ_U32,
+		fmts.XYZ_S32,
+		fmts.XYZ_S16_NORM,
+		fmts.XYZ_S16,
+		fmts.XYZ_S8_NORM,
+		fmts.XYZ_S8,
+		fmts.XYZW_F16,
+		fmts.XYZW_F32,
+		fmts.XYZW_F64,
+		fmts.XYZW_S10S10S10S2_NORM,
+		fmts.XYZW_S10S10S10S2,
+		fmts.XYZW_S16_NORM,
+		fmts.XYZW_S16,
+		fmts.XYZW_S32_NORM,
+		fmts.XYZW_S32,
+		fmts.XYZW_S8_NORM,
+		fmts.XYZW_S8,
+		fmts.XYZW_U10U10U10U2_NORM,
+		fmts.XYZW_U10U10U10U2,
+		fmts.XYZW_U16_NORM,
+		fmts.XYZW_U16,
+		fmts.XYZW_U32_NORM,
+		fmts.XYZW_U32,
+		fmts.XYZW_U8_NORM,
+		fmts.XYZW_U8,
+	} {
+		name := fmt.Sprint(f)
+		imageFormats[name] = image.NewUncompressed(name, f)
+	}
+
+	for k, v := range map[string]string{
+		// Vulkan
+		"VK_FORMAT_R4G4_UNORM_PACK8":           "RG_U4_NORM",
+		"VK_FORMAT_R8_UNORM":                   "R_U8_NORM",
+		"VK_FORMAT_R8_SNORM":                   "R_S8_NORM",
+		"VK_FORMAT_R8_USCALED":                 "R_U8",
+		"VK_FORMAT_R8_SSCALED":                 "R_S8",
+		"VK_FORMAT_R8_UINT":                    "R_U8",
+		"VK_FORMAT_R8_SINT":                    "R_S8",
+		"VK_FORMAT_R8_SRGB":                    "R_U8_NORM_sRGB",
+		"VK_FORMAT_R4G4B4A4_UNORM_PACK16":      "RGBA_U4_NORM",
+		"VK_FORMAT_B4G4R4A4_UNORM_PACK16":      "BGRA_U4_NORM",
+		"VK_FORMAT_R5G6B5_UNORM_PACK16":        "RGB_U5U6U5_NORM",
+		"VK_FORMAT_B5G6R5_UNORM_PACK16":        "BGR_U5U6U5_NORM",
+		"VK_FORMAT_R5G5B5A1_UNORM_PACK16":      "RGBA_U5U5U5U1_NORM",
+		"VK_FORMAT_B5G5R5A1_UNORM_PACK16":      "BGRA_U5U5U5U1_NORM",
+		"VK_FORMAT_A1R5G5B5_UNORM_PACK16":      "ARGB_U1U5U5U5_NORM",
+		"VK_FORMAT_R8G8_UNORM":                 "RG_U8_NORM",
+		"VK_FORMAT_R8G8_SNORM":                 "RG_S8_NORM",
+		"VK_FORMAT_R8G8_USCALED":               "RG_U8",
+		"VK_FORMAT_R8G8_SSCALED":               "RG_S8",
+		"VK_FORMAT_R8G8_UINT":                  "RG_U8",
+		"VK_FORMAT_R8G8_SINT":                  "RG_S8",
+		"VK_FORMAT_R8G8_SRGB":                  "RG_U8_NORM_sRGB",
+		"VK_FORMAT_R16_UNORM":                  "R_U16_NORM",
+		"VK_FORMAT_R16_SNORM":                  "R_S16_NORM",
+		"VK_FORMAT_R16_USCALED":                "R_U16",
+		"VK_FORMAT_R16_SSCALED":                "R_S16",
+		"VK_FORMAT_R16_UINT":                   "R_U16",
+		"VK_FORMAT_R16_SINT":                   "R_S16",
+		"VK_FORMAT_R16_SFLOAT":                 "R_F16",
+		"VK_FORMAT_R8G8B8_UNORM":               "RGB_U8_NORM",
+		"VK_FORMAT_R8G8B8_SNORM":               "RGB_S8_NORM",
+		"VK_FORMAT_R8G8B8_USCALED":             "RGB_U8",
+		"VK_FORMAT_R8G8B8_SSCALED":             "RGB_S8",
+		"VK_FORMAT_R8G8B8_UINT":                "RGB_U8",
+		"VK_FORMAT_R8G8B8_SINT":                "RGB_S8",
+		"VK_FORMAT_R8G8B8_SRGB":                "SRGB_U8_NORM",
+		"VK_FORMAT_B8G8R8_UNORM":               "BGR_U8_NORM",
+		"VK_FORMAT_B8G8R8_SNORM":               "BGR_S8_NORM",
+		"VK_FORMAT_B8G8R8_USCALED":             "BGR_U8",
+		"VK_FORMAT_B8G8R8_SSCALED":             "BGR_S8",
+		"VK_FORMAT_B8G8R8_UINT":                "BGR_U8",
+		"VK_FORMAT_B8G8R8_SINT":                "BGR_S8",
+		"VK_FORMAT_B8G8R8_SRGB":                "BGR_U8_NORM_sRGB",
+		"VK_FORMAT_R8G8B8A8_UNORM":             "RGBA_U8_NORM",
+		"VK_FORMAT_R8G8B8A8_SNORM":             "RGBA_S8_NORM",
+		"VK_FORMAT_R8G8B8A8_USCALED":           "RGBA_U8",
+		"VK_FORMAT_R8G8B8A8_SSCALED":           "RGBA_S8",
+		"VK_FORMAT_R8G8B8A8_UINT":              "RGBA_U8",
+		"VK_FORMAT_R8G8B8A8_SINT":              "RGBA_S8",
+		"VK_FORMAT_R8G8B8A8_SRGB":              "SRGBA_U8_NORM",
+		"VK_FORMAT_B8G8R8A8_UNORM":             "BGRA_U8_NORM",
+		"VK_FORMAT_B8G8R8A8_SNORM":             "BGRA_S8_NORM",
+		"VK_FORMAT_B8G8R8A8_USCALED":           "BGRA_U8",
+		"VK_FORMAT_B8G8R8A8_SSCALED":           "BGRA_S8",
+		"VK_FORMAT_B8G8R8A8_UINT":              "BGRA_U8",
+		"VK_FORMAT_B8G8R8A8_SINT":              "BGRA_S8",
+		"VK_FORMAT_B8G8R8A8_SRGB":              "BGRA_N_sRGBU8N_sRGBU8N_sRGBU8NU8",
+		"VK_FORMAT_A8B8G8R8_UNORM_PACK32":      "RGBA_U8_NORM",
+		"VK_FORMAT_A8B8G8R8_SNORM_PACK32":      "RGBA_S8_NORM",
+		"VK_FORMAT_A8B8G8R8_USCALED_PACK32":    "RGBA_U8",
+		"VK_FORMAT_A8B8G8R8_SSCALED_PACK32":    "RGBA_S8",
+		"VK_FORMAT_A8B8G8R8_UINT_PACK32":       "RGBA_U8",
+		"VK_FORMAT_A8B8G8R8_SINT_PACK32":       "RGBA_S8",
+		"VK_FORMAT_A8B8G8R8_SRGB_PACK32":       "RGBA_sRGBU8N_sRGBU8N_sRGBU8_NU8N",
+		"VK_FORMAT_A2R10G10B10_UNORM_PACK32":   "BGRA_U10U10U10U2_NORM",
+		"VK_FORMAT_A2R10G10B10_SNORM_PACK32":   "BGRA_S10S10S10S2_NORM",
+		"VK_FORMAT_A2R10G10B10_USCALED_PACK32": "RGBA_U10U10U10U2",
+		"VK_FORMAT_A2R10G10B10_SSCALED_PACK32": "RGBA_S10S10S10S2",
+		"VK_FORMAT_A2R10G10B10_UINT_PACK32":    "BGRA_U10U10U10U2",
+		"VK_FORMAT_A2R10G10B10_SINT_PACK32":    "BGRA_S10S10S10S2",
+		"VK_FORMAT_A2B10G10R10_UNORM_PACK32":   "RGBA_U10U10U10U2_NORM",
+		"VK_FORMAT_A2B10G10R10_SNORM_PACK32":   "RGBA_S10S10S10S2_NORM",
+		"VK_FORMAT_A2B10G10R10_USCALED_PACK32": "RGBA_U10U10U10U2",
+		"VK_FORMAT_A2B10G10R10_SSCALED_PACK32": "RGBA_S10S10S10S2",
+		"VK_FORMAT_A2B10G10R10_UINT_PACK32":    "RGBA_U10U10U10U2",
+		"VK_FORMAT_A2B10G10R10_SINT_PACK32":    "RGBA_S10S10S10S2",
+		"VK_FORMAT_R16G16_UNORM":               "RG_U16_NORM",
+		"VK_FORMAT_R16G16_SNORM":               "RG_S16_NORM",
+		"VK_FORMAT_R16G16_USCALED":             "RG_U16",
+		"VK_FORMAT_R16G16_SSCALED":             "RG_S16",
+		"VK_FORMAT_R16G16_UINT":                "RG_U16",
+		"VK_FORMAT_R16G16_SINT":                "RG_S16",
+		"VK_FORMAT_R16G16_SFLOAT":              "RG_F16",
+		"VK_FORMAT_R32_UINT":                   "R_U32",
+		"VK_FORMAT_R32_SINT":                   "R_S32",
+		"VK_FORMAT_R32_SFLOAT":                 "R_F32",
+		"VK_FORMAT_B10G11R11_UFLOAT_PACK32":    "RGB_F11F11F10",
+		"VK_FORMAT_E5B9G9R9_UFLOAT_PACK32":     "RGBE_U9U9U9U5",
+		"VK_FORMAT_R16G16B16_UNORM":            "RGB_U16_NORM",
+		"VK_FORMAT_R16G16B16_SNORM":            "RGB_S16_NORM",
+		"VK_FORMAT_R16G16B16_USCALED":          "RGB_U16",
+		"VK_FORMAT_R16G16B16_SSCALED":          "RGB_S16",
+		"VK_FORMAT_R16G16B16_UINT":             "RGB_U16",
+		"VK_FORMAT_R16G16B16_SINT":             "RGB_S16",
+		"VK_FORMAT_R16G16B16_SFLOAT":           "RGB_F32",
+		"VK_FORMAT_R16G16B16A16_UNORM":         "RGBA_U16_NORM",
+		"VK_FORMAT_R16G16B16A16_SNORM":         "RGBA_S16_NORM",
+		"VK_FORMAT_R16G16B16A16_USCALED":       "RGBA_U16",
+		"VK_FORMAT_R16G16B16A16_SSCALED":       "RGBA_S16",
+		"VK_FORMAT_R16G16B16A16_UINT":          "RGBA_U16",
+		"VK_FORMAT_R16G16B16A16_SINT":          "RGBA_S16",
+		"VK_FORMAT_R16G16B16A16_SFLOAT":        "RGBA_F16",
+		"VK_FORMAT_R32G32_UINT":                "RG_U32",
+		"VK_FORMAT_R32G32_SINT":                "RG_S32",
+		"VK_FORMAT_R32G32_SFLOAT":              "RG_F32",
+		"VK_FORMAT_R64_UINT":                   "R_U64",
+		"VK_FORMAT_R64_SINT":                   "R_S64",
+		"VK_FORMAT_R64_SFLOAT":                 "R_F64",
+		"VK_FORMAT_R32G32B32_UINT":             "RGB_U32",
+		"VK_FORMAT_R32G32B32_SINT":             "RGB_S32",
+		"VK_FORMAT_R32G32B32_SFLOAT":           "RGB_F32",
+		"VK_FORMAT_R32G32B32A32_UINT":          "RGBA_U32",
+		"VK_FORMAT_R32G32B32A32_SINT":          "RGBA_S32",
+		"VK_FORMAT_R32G32B32A32_SFLOAT":        "RGBA_F32",
+		"VK_FORMAT_R64G64_UINT":                "RG_U64",
+		"VK_FORMAT_R64G64_SINT":                "RG_S64",
+		"VK_FORMAT_R64G64_SFLOAT":              "RG_F64",
+		"VK_FORMAT_R64G64B64_UINT":             "RGB_U64",
+		"VK_FORMAT_R64G64B64_SINT":             "RGB_S64",
+		"VK_FORMAT_R64G64B64_SFLOAT":           "RGB_F64",
+		"VK_FORMAT_R64G64B64A64_UINT":          "RGBA_U64",
+		"VK_FORMAT_R64G64B64A64_SINT":          "RGBA_S64",
+		"VK_FORMAT_R64G64B64A64_SFLOAT":        "RGBA_F64",
+
+		"VK_FORMAT_BC1_RGB_UNORM_BLOCK":       "S3_DXT1_RGB",
+		"VK_FORMAT_BC1_RGB_SRGB_BLOCK":        "S3_DXT1_RGB",
+		"VK_FORMAT_BC1_RGBA_UNORM_BLOCK":      "S3_DXT1_RGBA",
+		"VK_FORMAT_BC1_RGBA_SRGB_BLOCK":       "S3_DXT1_RGBA",
+		"VK_FORMAT_BC2_UNORM_BLOCK":           "S3_DXT3_RGBA",
+		"VK_FORMAT_BC2_SRGB_BLOCK":            "S3_DXT3_RGBA",
+		"VK_FORMAT_BC3_UNORM_BLOCK":           "S3_DXT5_RGBA",
+		"VK_FORMAT_BC3_SRGB_BLOCK":            "S3_DXT5_RGBA",
+		"VK_FORMAT_BC4_UNORM_BLOCK":           "RGTC1_BC4_R_U8_NORM",
+		"VK_FORMAT_BC4_SNORM_BLOCK":           "RGTC1_BC4_R_S8_NORM",
+		"VK_FORMAT_BC5_UNORM_BLOCK":           "RGTC2_BC5_RG_U8_NORM",
+		"VK_FORMAT_BC5_SNORM_BLOCK":           "RGTC2_BC5_RG_S8_NORM",
+		"VK_FORMAT_BC6H_UFLOAT_BLOCK":         "",
+		"VK_FORMAT_BC6H_SFLOAT_BLOCK":         "",
+		"VK_FORMAT_BC7_UNORM_BLOCK":           "",
+		"VK_FORMAT_BC7_SRGB_BLOCK":            "",
+		"VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK":   "ETC2_RGB_U8_NORM",
+		"VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK":    "ETC2_RGB_U8_NORM",
+		"VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK": "ETC2_RGBA_U8U8U8U1_NORM",
+		"VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK":  "ETC2_RGBA_U8U8U8U1_NORM",
+		"VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK": "ETC2_SRGBA_U8_NORM",
+		"VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK":  "ETC2_SRGBA_U8_NORM",
+		"VK_FORMAT_EAC_R11_UNORM_BLOCK":       "ETC2_R_U11_NORM",
+		"VK_FORMAT_EAC_R11_SNORM_BLOCK":       "ETC2_R_S11_NORM",
+		"VK_FORMAT_EAC_R11G11_UNORM_BLOCK":    "ETC2_RG_U11_NORM",
+		"VK_FORMAT_EAC_R11G11_SNORM_BLOCK":    "ETC2_RG_S11_NORM",
+		"VK_FORMAT_ASTC_4x4_UNORM_BLOCK":      "ASTC_RGBA_4x4",
+		"VK_FORMAT_ASTC_4x4_SRGB_BLOCK":       "ASTC_RGBA_4x4",
+		"VK_FORMAT_ASTC_5x4_UNORM_BLOCK":      "ASTC_RGBA_5x4",
+		"VK_FORMAT_ASTC_5x4_SRGB_BLOCK":       "ASTC_RGBA_5x4",
+		"VK_FORMAT_ASTC_5x5_UNORM_BLOCK":      "ASTC_RGBA_5x5",
+		"VK_FORMAT_ASTC_5x5_SRGB_BLOCK":       "ASTC_RGBA_5x5",
+		"VK_FORMAT_ASTC_6x5_UNORM_BLOCK":      "ASTC_RGBA_6x5",
+		"VK_FORMAT_ASTC_6x5_SRGB_BLOCK":       "ASTC_RGBA_6x5",
+		"VK_FORMAT_ASTC_6x6_UNORM_BLOCK":      "ASTC_RGBA_6x6",
+		"VK_FORMAT_ASTC_6x6_SRGB_BLOCK":       "ASTC_RGBA_6x6",
+		"VK_FORMAT_ASTC_8x5_UNORM_BLOCK":      "ASTC_RGBA_8x5",
+		"VK_FORMAT_ASTC_8x5_SRGB_BLOCK":       "ASTC_RGBA_8x5",
+		"VK_FORMAT_ASTC_8x6_UNORM_BLOCK":      "ASTC_RGBA_8x6",
+		"VK_FORMAT_ASTC_8x6_SRGB_BLOCK":       "ASTC_RGBA_8x6",
+		"VK_FORMAT_ASTC_8x8_UNORM_BLOCK":      "ASTC_RGBA_8x8",
+		"VK_FORMAT_ASTC_8x8_SRGB_BLOCK":       "ASTC_RGBA_8x8",
+		"VK_FORMAT_ASTC_10x5_UNORM_BLOCK":     "ASTC_RGBA_10x5",
+		"VK_FORMAT_ASTC_10x5_SRGB_BLOCK":      "ASTC_RGBA_10x5",
+		"VK_FORMAT_ASTC_10x6_UNORM_BLOCK":     "ASTC_RGBA_10x6",
+		"VK_FORMAT_ASTC_10x6_SRGB_BLOCK":      "ASTC_RGBA_10x6",
+		"VK_FORMAT_ASTC_10x8_UNORM_BLOCK":     "ASTC_RGBA_10x8",
+		"VK_FORMAT_ASTC_10x8_SRGB_BLOCK":      "ASTC_RGBA_10x8",
+		"VK_FORMAT_ASTC_10x10_UNORM_BLOCK":    "ASTC_RGBA_10x10",
+		"VK_FORMAT_ASTC_10x10_SRGB_BLOCK":     "ASTC_RGBA_10x10",
+		"VK_FORMAT_ASTC_12x10_UNORM_BLOCK":    "ASTC_RGBA_12x10",
+		"VK_FORMAT_ASTC_12x10_SRGB_BLOCK":     "ASTC_RGBA_12x10",
+		"VK_FORMAT_ASTC_12x12_UNORM_BLOCK":    "ASTC_RGBA_12x12",
+		"VK_FORMAT_ASTC_12x12_SRGB_BLOCK":     "ASTC_RGBA_12x12",
+
+		"VK_FORMAT_D32_SFLOAT_S8_UINT":         "DS_F32U8",
+		"VK_FORMAT_D32_SFLOAT":                 "D_F32",
+		"VK_FORMAT_D16_UNORM":                  "D_U16_NORM",
+		"VK_FORMAT_D16_UNORM_S8_UINT":          "DS_NU16S8",
+		"VK_FORMAT_X8_D24_UNORM_PACK32":        "ЖD_U8U24_NORM",
+		"VK_FORMAT_D24_UNORM_S8_UINT":          "DS_NU24S8",
+		"VK_FORMAT_S8_UINT":                    "S_U8",
+		"VK_FORMAT_D32_SFLOAT_S8_UINT:DEPTH":   "D_F32",
+		"VK_FORMAT_D32_SFLOAT:DEPTH":           "D_F32",
+		"VK_FORMAT_D16_UNORM:DEPTH":            "D_U16_NORM",
+		"VK_FORMAT_D16_UNORM_S8_UINT:DEPTH":    "D_U16_NORM",
+		"VK_FORMAT_X8_D24_UNORM_PACK32:DEPTH":  "D_U24_NORM",
+		"VK_FORMAT_D24_UNORM_S8_UINT:DEPTH":    "D_U24_NORM",
+		"VK_FORMAT_D32_SFLOAT_S8_UINT:STENCIL": "S_U8",
+		"VK_FORMAT_D16_UNORM_S8_UINT:STENCIL":  "S_U8",
+		"VK_FORMAT_D24_UNORM_S8_UINT:STENCIL":  "S_U8",
+		"VK_FORMAT_S8_UINT:STENCIL":            "S_U8",
+
+		// GLES (compressed only)
+
+		// ETC1
+		"GL_ETC1_RGB8_OES": "ETC1_RGB_U8_NORM",
+
+		// ASTC
+		"GL_COMPRESSED_RGBA_ASTC_4x4_KHR":           "ASTC_RGBA_4x4",
+		"GL_COMPRESSED_RGBA_ASTC_5x4_KHR":           "ASTC_RGBA_5x4",
+		"GL_COMPRESSED_RGBA_ASTC_5x5_KHR":           "ASTC_RGBA_5x5",
+		"GL_COMPRESSED_RGBA_ASTC_6x5_KHR":           "ASTC_RGBA_6x5",
+		"GL_COMPRESSED_RGBA_ASTC_6x6_KHR":           "ASTC_RGBA_6x6",
+		"GL_COMPRESSED_RGBA_ASTC_8x5_KHR":           "ASTC_RGBA_8x5",
+		"GL_COMPRESSED_RGBA_ASTC_8x6_KHR":           "ASTC_RGBA_8x6",
+		"GL_COMPRESSED_RGBA_ASTC_8x8_KHR":           "ASTC_RGBA_8x8",
+		"GL_COMPRESSED_RGBA_ASTC_10x5_KHR":          "ASTC_RGBA_10x5",
+		"GL_COMPRESSED_RGBA_ASTC_10x6_KHR":          "ASTC_RGBA_10x6",
+		"GL_COMPRESSED_RGBA_ASTC_10x8_KHR":          "ASTC_RGBA_10x8",
+		"GL_COMPRESSED_RGBA_ASTC_10x10_KHR":         "ASTC_RGBA_10x10",
+		"GL_COMPRESSED_RGBA_ASTC_12x10_KHR":         "ASTC_RGBA_12x10",
+		"GL_COMPRESSED_RGBA_ASTC_12x12_KHR":         "ASTC_RGBA_12x12",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR":   "ASTC_SRGB8_ALPHA8_4x4",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR":   "ASTC_SRGB8_ALPHA8_5x4",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR":   "ASTC_SRGB8_ALPHA8_5x5",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR":   "ASTC_SRGB8_ALPHA8_6x5",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR":   "ASTC_SRGB8_ALPHA8_6x6",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR":   "ASTC_SRGB8_ALPHA8_8x5",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR":   "ASTC_SRGB8_ALPHA8_8x6",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR":   "ASTC_SRGB8_ALPHA8_8x8",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR":  "ASTC_SRGB8_ALPHA8_10x5",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR":  "ASTC_SRGB8_ALPHA8_10x6",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR":  "ASTC_SRGB8_ALPHA8_10x8",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR": "ASTC_SRGB8_ALPHA8_10x10",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR": "ASTC_SRGB8_ALPHA8_12x10",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR": "ASTC_SRGB8_ALPHA8_12x12",
+
+		// ATC
+		"GL_ATC_RGB_AMD":                     "ATC_RGB_AMD",
+		"GL_ATC_RGBA_EXPLICIT_ALPHA_AMD":     "ATC_RGBA_EXPLICIT_ALPHA_AMD",
+		"GL_ATC_RGBA_INTERPOLATED_ALPHA_AMD": "ATC_RGBA_INTERPOLATED_ALPHA_AMD",
+
+		// ETC
+		"GL_COMPRESSED_R11_EAC":                        "ETC2_R_U11_NORM",
+		"GL_COMPRESSED_SIGNED_R11_EAC":                 "ETC2_R_S11_NORM",
+		"GL_COMPRESSED_RG11_EAC":                       "ETC2_RG_U11_NORM",
+		"GL_COMPRESSED_SIGNED_RG11_EAC":                "ETC2_RG_S11_NORM",
+		"GL_COMPRESSED_RGB8_ETC2":                      "ETC2_RGB_U8_NORM",
+		"GL_COMPRESSED_SRGB8_ETC2":                     "ETC2_SRGB_U8_NORM",
+		"GL_COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2":  "ETC2_RGBA_U8U8U8U1_NORM",
+		"GL_COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2": "ETC2_SRGBA_U8U8U8U1_NORM",
+		"GL_COMPRESSED_RGBA8_ETC2_EAC":                 "ETC2_RGBA_U8_NORM",
+		"GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC":          "ETC2_SRGBA_U8_NORM",
+
+		// S3TC
+		"GL_COMPRESSED_RGB_S3TC_DXT1_EXT":  "S3_DXT1_RGB",
+		"GL_COMPRESSED_RGBA_S3TC_DXT1_EXT": "S3_DXT1_RGBA",
+		"GL_COMPRESSED_RGBA_S3TC_DXT3_EXT": "S3_DXT3_RGBA",
+		"GL_COMPRESSED_RGBA_S3TC_DXT5_EXT": "S3_DXT5_RGBA",
+	} {
+		imageFormats[k] = imageFormats[v]
+	}
+	return imageFormats
+}
