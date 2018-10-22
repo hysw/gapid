@@ -145,7 +145,7 @@ type (
 	DumpFBOFlags struct {
 		Gapis GapisFlags
 		Gapir GapirFlags
-		Out   string `help:"output framebuffer directory path"`
+		Out   string `help:"file prefix for framebuffer output"`
 		CommandFilterFlags
 	}
 	DumpFlags struct {
