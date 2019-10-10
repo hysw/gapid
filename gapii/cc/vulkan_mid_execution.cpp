@@ -135,7 +135,7 @@ class StagingBuffer {
                 VulkanImports::VkDeviceFunctions &device_functions,
                 VkDevice device,
                 const VkPhysicalDeviceMemoryProperties &memory_properties,
-                uint32_t size)
+                VkDeviceSize size)
       : device_functions_(device_functions), device_(device), size_(size) {
     VkBufferCreateInfo staging_buffer_create_info{arena};
     staging_buffer_create_info.msType =
@@ -202,7 +202,7 @@ class StagingBuffer {
   VkDevice device_;
   VkBuffer staging_buffer_ = VkBuffer(0);
   VkDeviceMemory staging_memory_ = VkDeviceMemory(0);
-  size_t size_;
+  VkDeviceSize size_;
   void *bound_memory_ = nullptr;
 };
 
@@ -449,7 +449,7 @@ void VulkanSpy::serializeGPUBuffers(StateSerializer *serializer) {
 
     auto get_element_size = [this](uint32_t format, uint32_t aspect_bit,
                                    bool in_buffer) -> uint32_t {
-      if (VkImageAspectFlagBits::VK_IMAGE_ASPECT_STENCIL_BIT == aspect_bit) {
+      if (VkImageAspectFlagBits::VK_IMAGE_ASPECT_DEPTH_BIT == aspect_bit) {
         return subGetDepthElementSize(nullptr, nullptr, format, in_buffer);
       }
       return subGetElementAndTexelBlockSizeForAspect(nullptr, nullptr, format,
